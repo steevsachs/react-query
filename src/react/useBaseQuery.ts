@@ -1,11 +1,88 @@
 import React from 'react'
 
-import { QueryKey } from '../core'
+import { QueryClient, QueryKey } from '../core'
 import { notifyManager } from '../core/notifyManager'
 import { QueryObserver } from '../core/queryObserver'
 import { useQueryErrorResetBoundary } from './QueryErrorResetBoundary'
 import { useQueryClient } from './QueryClientProvider'
 import { UseBaseQueryOptions } from './types'
+
+function configureNotifyManager<
+  TQueryFnData,
+  TError,
+  TData,
+  TQueryData,
+  TQueryKey extends QueryKey
+>({ options }: {
+  options: UseBaseQueryOptions<
+    TQueryFnData,
+    TError,
+    TData,
+    TQueryData,
+    TQueryKey
+  >
+}) {
+  // Include callbacks in batch renders
+  if (options.onError) {
+    options.onError = notifyManager.batchCalls(
+      options.onError
+    )
+  }
+
+  if (options.onSuccess) {
+    options.onSuccess = notifyManager.batchCalls(
+      options.onSuccess
+    )
+  }
+
+  if (options.onSettled) {
+    options.onSettled = notifyManager.batchCalls(
+      options.onSettled
+    )
+  }
+}
+
+export function initDefaultedOptions<
+  TQueryFnData,
+  TError,
+  TData,
+  TQueryData,
+  TQueryKey extends QueryKey
+>({ errorResetBoundary, options, queryClient }: {
+  errorResetBoundary: ReturnType<typeof useQueryErrorResetBoundary>
+  options: UseBaseQueryOptions<
+    TQueryFnData,
+    TError,
+    TData,
+    TQueryData,
+    TQueryKey
+  >,
+  queryClient: QueryClient
+}) {
+  const defaultedOptions = queryClient.defaultQueryObserverOptions(options)
+
+  // Make sure results are optimistically set in fetching state before subscribing or updating options
+  defaultedOptions.optimisticResults = true
+
+  configureNotifyManager({ options: defaultedOptions })
+
+  if (defaultedOptions.suspense) {
+    // Always set stale time when using suspense to prevent
+    // fetching again when directly mounting after suspending
+    if (typeof defaultedOptions.staleTime !== 'number') {
+      defaultedOptions.staleTime = 1000
+    }
+  }
+
+  if (defaultedOptions.suspense || defaultedOptions.useErrorBoundary) {
+    // Prevent retrying failed query if the error boundary has not been reset yet
+    if (!errorResetBoundary.isReset()) {
+      defaultedOptions.retryOnMount = false
+    }
+  }
+
+  return defaultedOptions;
+}
 
 export function useBaseQuery<
   TQueryFnData,
@@ -28,44 +105,7 @@ export function useBaseQuery<
 
   const queryClient = useQueryClient()
   const errorResetBoundary = useQueryErrorResetBoundary()
-  const defaultedOptions = queryClient.defaultQueryObserverOptions(options)
-
-  // Make sure results are optimistically set in fetching state before subscribing or updating options
-  defaultedOptions.optimisticResults = true
-
-  // Include callbacks in batch renders
-  if (defaultedOptions.onError) {
-    defaultedOptions.onError = notifyManager.batchCalls(
-      defaultedOptions.onError
-    )
-  }
-
-  if (defaultedOptions.onSuccess) {
-    defaultedOptions.onSuccess = notifyManager.batchCalls(
-      defaultedOptions.onSuccess
-    )
-  }
-
-  if (defaultedOptions.onSettled) {
-    defaultedOptions.onSettled = notifyManager.batchCalls(
-      defaultedOptions.onSettled
-    )
-  }
-
-  if (defaultedOptions.suspense) {
-    // Always set stale time when using suspense to prevent
-    // fetching again when directly mounting after suspending
-    if (typeof defaultedOptions.staleTime !== 'number') {
-      defaultedOptions.staleTime = 1000
-    }
-  }
-
-  if (defaultedOptions.suspense || defaultedOptions.useErrorBoundary) {
-    // Prevent retrying failed query if the error boundary has not been reset yet
-    if (!errorResetBoundary.isReset()) {
-      defaultedOptions.retryOnMount = false
-    }
-  }
+  const defaultedOptions = initDefaultedOptions({ errorResetBoundary, options, queryClient });
 
   const obsRef = React.useRef<
     QueryObserver<TQueryFnData, TError, TData, TQueryData, TQueryKey>
